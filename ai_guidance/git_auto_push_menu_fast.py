@@ -1,15 +1,15 @@
 r"""
-git_auto_push_menu.py
+git_auto_push_menu_fast.py
 
-带菜单版：
-1. 智能自动：有可用 origin 就 push；没有就创建仓库再 push
-2. 只 push：不创建仓库
-3. 创建/重连仓库：按文件夹名创建 GitHub 仓库，再 push
-4. 打开当前 GitHub 仓库页面
+菜单调整版：
+1. 只 push 到已有 origin（默认，回车执行，最快）
+2. 创建/重连 GitHub 仓库，然后 push
+3. 打开当前 GitHub 仓库页面
+4. 智能自动：有 origin 就 push；没有就创建仓库再 push
 0. 退出
 
 运行：
-  python "ai_guidance/git_auto_push_menu.py"
+  python "ai_guidance/git_auto_push_menu_fast.py"
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-VERSION = "menu-v1-smart-push-create"
+VERSION = "menu-fast-v1-default-push"
 
 IGNORE_BLOCK = """
 # AI_BACKUP_IGNORE_BEGIN
@@ -96,10 +96,10 @@ def slug(name):
 
 def menu():
     print("\n选择操作：")
-    print("1. 智能自动：有 origin 就 push；没有就创建仓库再 push")
-    print("2. 只 push 到已有 origin，不创建仓库")
-    print("3. 创建/重连 GitHub 仓库，然后 push")
-    print("4. 打开当前 GitHub 仓库页面")
+    print("1. 只 push 到已有 origin，不创建仓库（默认，最快）")
+    print("2. 创建/重连 GitHub 仓库，然后 push")
+    print("3. 打开当前 GitHub 仓库页面")
+    print("4. 智能自动：有 origin 就 push；没有就创建仓库再 push")
     print("0. 退出")
 
     while True:
@@ -260,19 +260,29 @@ def open_repo(origin):
     webbrowser.open(url)
 
 
+def do_push_only(git, gh, project, args):
+    if not origin_valid(git, gh, project):
+        print("[STOP] 没有可用 origin。第一次上传请选 2 创建/重连仓库")
+        return
+    commit_all(git, project, args.message)
+    push(git, project)
+    open_repo(get_origin(git, project))
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--project", type=Path, default=Path.cwd())
     parser.add_argument("--public", action="store_true")
     parser.add_argument("--private", action="store_true")
-    parser.add_argument("--auto", action="store_true", help="跳过菜单，智能自动")
+    parser.add_argument("--auto", action="store_true", help="跳过菜单，执行默认 1：只 push")
+    parser.add_argument("--smart", action="store_true", help="跳过菜单，执行 4：智能自动")
     parser.add_argument("-m", "--message", default=None)
     args = parser.parse_args()
 
     project = args.project.resolve()
 
     print("=" * 80)
-    print(f"git_auto_push_menu.py | {VERSION}")
+    print(f"git_auto_push_menu_fast.py | {VERSION}")
     print(f"[PROJECT] {project}")
     print("=" * 80)
 
@@ -289,33 +299,33 @@ def main():
     add_ignore(project)
     ensure_github_login(gh, git)
 
-    choice = "1" if args.auto else menu()
+    if args.smart:
+        choice = "4"
+    elif args.auto:
+        choice = "1"
+    else:
+        choice = menu()
 
     if choice == "0":
         print("[EXIT]")
         return
 
-    if choice == "4":
-        open_repo(get_origin(git, project))
+    if choice == "1":
+        do_push_only(git, gh, project, args)
         return
 
     if choice == "2":
-        if not origin_valid(git, gh, project):
-            print("[STOP] 没有可用 origin。请选择 1 或 3 创建仓库")
-            return
-        commit_all(git, project, args.message)
-        push(git, project)
-        open_repo(get_origin(git, project))
-        return
-
-    if choice == "3":
         create_or_link_repo(git, gh, project, args, force_replace=True)
         commit_all(git, project, args.message)
         push(git, project)
         open_repo(get_origin(git, project))
         return
 
-    if choice == "1":
+    if choice == "3":
+        open_repo(get_origin(git, project))
+        return
+
+    if choice == "4":
         if not origin_valid(git, gh, project):
             create_or_link_repo(git, gh, project, args, force_replace=True)
         commit_all(git, project, args.message)
