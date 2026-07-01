@@ -1,19 +1,10 @@
 r"""
-git_auto_create_push_v3.py
+git_auto_create_push_v4.py
 
-Robust version:
-- always runs git init in the target project
-- commits before creating GitHub repo
-- creates repo from folder name
-- asks private/public
-- if repo already exists, auto-links to it
-- pushes and opens repo link
-
-Run from project root:
-  python ai_guidance/git_auto_create_push_v3.py
-
-Or:
-  python ai_guidance/git_auto_create_push_v3.py --project "C:\Users\haha2\Desktop\CS\ASL Hand"
+Fixes:
+- if origin points to missing GitHub repo, remove it and create repo
+- verifies repo exists before push
+- creates repo from folder name, asks private/public
 """
 
 from __future__ import annotations
@@ -29,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-VERSION = "v3-robust-init-commit-create-push"
+VERSION = "v4-fix-missing-origin-repo"
 
 IGNORE_BLOCK = """
 # AI_PROJECT_BACKUP_RULES_BEGIN
@@ -81,10 +72,10 @@ class Progress:
 
 def run(cmd, cwd=None, check=True):
     print("$ " + " ".join(f'"{c}"' if " " in str(c) else str(c) for c in cmd))
-    result = subprocess.run(cmd, cwd=cwd, text=True)
-    if check and result.returncode != 0:
-        raise SystemExit(result.returncode)
-    return result
+    r = subprocess.run(cmd, cwd=cwd, text=True)
+    if check and r.returncode != 0:
+        raise SystemExit(r.returncode)
+    return r
 
 
 def cap(cmd, cwd=None):
@@ -131,9 +122,9 @@ def get_remote(git, project):
     return out if code == 0 and out else None
 
 
-def get_branch(git, project):
-    code, out, _ = cap([git, "-C", str(project), "branch", "--show-current"])
-    return out if code == 0 and out else "main"
+def remove_origin(git, project):
+    if get_remote(git, project):
+        run([git, "-C", str(project), "remote", "remove", "origin"], check=False)
 
 
 def remote_to_web(remote):
@@ -143,6 +134,23 @@ def remote_to_web(remote):
         u = remote.replace("git@github.com:", "https://github.com/")
         return u[:-4] if u.endswith(".git") else u
     return None
+
+
+def repo_full_name_from_remote(remote):
+    web = remote_to_web(remote)
+    if not web:
+        return None
+    m = re.match(r"https://github\.com/([^/]+)/([^/]+)$", web)
+    if not m:
+        return None
+    return f"{m.group(1)}/{m.group(2)}"
+
+
+def gh_repo_exists(gh, full_name):
+    if not full_name:
+        return False
+    code, _, _ = cap([gh, "repo", "view", full_name])
+    return code == 0
 
 
 def open_repo(git, project):
@@ -167,19 +175,13 @@ def ensure_files(project):
 
     readme = project / "README.md"
     if not readme.exists():
-        readme.write_text(
-            f"# {project.name}\n\nCode and guidance files are stored here.\n",
-            encoding="utf-8",
-        )
+        readme.write_text(f"# {project.name}\n\nCode and guidance files are stored here.\n", encoding="utf-8")
 
 
 def ensure_git_repo(git, project):
     run([git, "-C", str(project), "init"])
-    run([git, "-C", str(project), "branch", "-M", "main"], check=False)
-    code, _, _ = cap([git, "-C", str(project), "rev-parse", "--is-inside-work-tree"])
-    if code != 0:
-        raise SystemExit("[ERROR] git init failed")
-    return get_branch(git, project) or "main"
+    run([git, "-C", str(project), "checkout", "-B", "main"], check=False)
+    return "main"
 
 
 def commit(git, project, msg=None):
@@ -191,8 +193,8 @@ def commit(git, project, msg=None):
         return
 
     msg = msg or f"Backup project {datetime.now().strftime('%Y-%m-%d %H-%M')}"
-    result = subprocess.run([git, "-C", str(project), "commit", "-m", msg], text=True)
-    if result.returncode != 0:
+    r = subprocess.run([git, "-C", str(project), "commit", "-m", msg], text=True)
+    if r.returncode != 0:
         print("[WARN] Git identity missing.")
         name = input("Git user.name: ").strip()
         email = input("Git user.email: ").strip()
@@ -229,13 +231,18 @@ def gh_username(gh):
     return out if code == 0 and out else None
 
 
-def ensure_origin(git, gh, project, args):
+def ensure_valid_origin(git, gh, project, args):
+    gh_login(gh)
+
     remote = get_remote(git, project)
     if remote:
-        print(f"[ORIGIN] {remote}")
-        return
+        full_name = repo_full_name_from_remote(remote)
+        if gh_repo_exists(gh, full_name):
+            print(f"[ORIGIN OK] {remote}")
+            return
+        print(f"[WARN] origin points to missing repo: {remote}")
+        remove_origin(git, project)
 
-    gh_login(gh)
     repo = slugify(project.name)
     public = choose_visibility(args)
     visibility = "--public" if public else "--private"
@@ -243,28 +250,33 @@ def ensure_origin(git, gh, project, args):
     print(f"[INFO] Repo name: {repo}")
     print(f"[INFO] Visibility: {'public' if public else 'private'}")
 
-    result = subprocess.run(
+    # If repo already exists on account, use it.
+    user = gh_username(gh)
+    if user and gh_repo_exists(gh, f"{user}/{repo}"):
+        url = f"https://github.com/{user}/{repo}.git"
+        print(f"[INFO] Existing repo found: {url}")
+        run([git, "-C", str(project), "remote", "add", "origin", url])
+        return
+
+    r = subprocess.run(
         [gh, "repo", "create", repo, visibility, "--source", str(project), "--remote", "origin"],
         cwd=project,
         text=True,
     )
 
-    if result.returncode == 0:
+    if r.returncode != 0:
+        print("[WARN] Create failed. Enter a different repo name.")
+        new_repo = input(f"Repo name, Enter for {repo}-2: ").strip() or f"{repo}-2"
+        run([gh, "repo", "create", new_repo, visibility, "--source", str(project), "--remote", "origin"], cwd=project)
+
+
+def push(git, project):
+    r = subprocess.run([git, "-C", str(project), "push", "-u", "origin", "main"], text=True)
+    if r.returncode == 0:
         return
 
-    print("[WARN] gh repo create failed. Trying to link existing repo with same name.")
-    user = gh_username(gh)
-    if not user:
-        url = input("Paste existing repo URL: ").strip()
-        if not url:
-            raise SystemExit("[ERROR] No repo URL")
-    else:
-        url = f"https://github.com/{user}/{repo}.git"
-        print(f"[INFO] Try origin: {url}")
-
-    run([git, "-C", str(project), "remote", "add", "origin", url], check=False)
-    if not get_remote(git, project):
-        run([git, "-C", str(project), "remote", "set-url", "origin", url])
+    print("[WARN] Push failed. Checking origin...")
+    raise SystemExit(r.returncode)
 
 
 def main():
@@ -278,7 +290,7 @@ def main():
 
     project = args.project.resolve()
     print("=" * 80)
-    print(f"git_auto_create_push_v3.py | {VERSION}")
+    print(f"git_auto_create_push_v4.py | {VERSION}")
     print(f"[PROJECT] {project}")
     print("=" * 80)
 
@@ -300,19 +312,20 @@ def main():
     ensure_files(project)
 
     p.step("Force git init")
-    branch = ensure_git_repo(git, project)
+    ensure_git_repo(git, project)
 
     p.step("Commit changes")
     commit(git, project, args.message)
 
-    p.step("Create/link GitHub origin")
-    ensure_origin(git, gh, project, args)
+    p.step("Create/link valid GitHub origin")
+    ensure_valid_origin(git, gh, project, args)
 
     p.step("Push")
-    run([git, "-C", str(project), "push", "-u", "origin", branch])
+    push(git, project)
 
     p.step("Open repo")
     open_repo(git, project)
+
     print("[DONE]")
 
 
