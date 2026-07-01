@@ -1,0 +1,12 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Git: Commit and Push",
+      "type": "shell",
+      "command": "python ai_guidance/git_auto_link_push.py",
+      "problemMatcher": [],
+      "group": "build"
+    }
+  ]
+}

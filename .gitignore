@@ -1,0 +1,35 @@
+
+# AI_PROJECT_BACKUP_RULES_BEGIN
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+.env
+*.env
+kaggle.json
+.DS_Store
+Thumbs.db
+
+datasets/
+data/
+runs/
+outputs/
+weights/
+checkpoints/
+
+*.pth
+*.pt
+*.onnx
+*.engine
+*.joblib
+*.pkl
+
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.zip
+*.rar
+*.7z
+# AI_PROJECT_BACKUP_RULES_END
