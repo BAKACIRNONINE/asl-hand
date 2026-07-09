@@ -1,12 +1,11 @@
 r"""
-git_auto_push_menu_fast.py
+GitHub 项目上传工具
 
-菜单调整版：
-1. 只 push 到已有 origin（默认，回车执行，最快）
-2. 创建/重连 GitHub 仓库，然后 push
-3. 打开当前 GitHub 仓库页面
-4. 智能自动：有 origin 就 push；没有就创建仓库再 push
-0. 退出
+功能：
+1. 推送到已有仓库
+2. 新建或连接仓库后推送
+3. 打开仓库页面
+4. 自动检查仓库并推送
 
 运行：
   python "ai_guidance/git_auto_push_menu_fast.py"
@@ -24,7 +23,7 @@ from datetime import datetime
 from pathlib import Path
 
 
-VERSION = "menu-fast-v1-default-push"
+VERSION = "menu-fast-v2-open-on-create"
 
 IGNORE_BLOCK = """
 # AI_BACKUP_IGNORE_BEGIN
@@ -96,10 +95,10 @@ def slug(name):
 
 def menu():
     print("\n选择操作：")
-    print("1. 只 push 到已有 origin，不创建仓库（默认，最快）")
-    print("2. 创建/重连 GitHub 仓库，然后 push")
-    print("3. 打开当前 GitHub 仓库页面")
-    print("4. 智能自动：有 origin 就 push；没有就创建仓库再 push")
+    print("1. 推送到已有仓库（默认）")
+    print("2. 新建或连接仓库后推送")
+    print("3. 打开仓库页面")
+    print("4. 自动检查仓库并推送")
     print("0. 退出")
 
     while True:
@@ -210,17 +209,19 @@ def create_or_link_repo(git, gh, project, args, force_replace=False):
     if force_replace:
         remove_origin(git, project)
 
+    created = False
     if not repo_exists(gh, full_name):
         is_public = choose_visibility(args)
         visibility = "--public" if is_public else "--private"
         print(f"[CREATE] {full_name} ({'public' if is_public else 'private'})")
         cmd([gh, "repo", "create", repo, visibility])
+        created = True
     else:
         print(f"[OK] GitHub 仓库已存在：{full_name}")
 
     origin = f"https://github.com/{full_name}.git"
     set_origin(git, project, origin)
-    return origin
+    return origin, created
 
 
 def commit_all(git, project, message):
@@ -266,7 +267,6 @@ def do_push_only(git, gh, project, args):
         return
     commit_all(git, project, args.message)
     push(git, project)
-    open_repo(get_origin(git, project))
 
 
 def main():
@@ -315,10 +315,11 @@ def main():
         return
 
     if choice == "2":
-        create_or_link_repo(git, gh, project, args, force_replace=True)
+        origin, created = create_or_link_repo(git, gh, project, args, force_replace=True)
         commit_all(git, project, args.message)
         push(git, project)
-        open_repo(get_origin(git, project))
+        if created:
+            open_repo(origin)
         return
 
     if choice == "3":
@@ -326,11 +327,14 @@ def main():
         return
 
     if choice == "4":
+        origin = get_origin(git, project)
+        created = False
         if not origin_valid(git, gh, project):
-            create_or_link_repo(git, gh, project, args, force_replace=True)
+            origin, created = create_or_link_repo(git, gh, project, args, force_replace=True)
         commit_all(git, project, args.message)
         push(git, project)
-        open_repo(get_origin(git, project))
+        if created:
+            open_repo(origin)
         return
 
 
